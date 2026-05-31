@@ -90,5 +90,25 @@ class PancakeClient:
         except Exception:
             return None
 
+    def get_all_pairs_length(self) -> Optional[int]:
+        """Return the total number of pairs (`allPairsLength`) from the factory.
+
+        Returns `None` on error.
+        """
+        if not self.factory_address:
+            raise ValueError("factory_address is not configured")
+        if not getattr(self.provider, "w3", None):
+            raise ProviderError("Provider does not have an active Web3 instance")
+
+        try:
+            FACTORY_ABI_LEN = [
+                {"inputs": [], "name": "allPairsLength", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}
+            ]
+            contract = self.provider.w3.eth.contract(address=self.factory_address, abi=FACTORY_ABI_LEN)
+            length = contract.functions.allPairsLength().call()
+            return int(length)
+        except Exception:
+            return None
+
 
 __all__ = ["PancakeClient", "PairInfo"]

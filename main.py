@@ -64,6 +64,67 @@ def run_version() -> int:
     return 0
 
 
+def run_self_test(config: AppConfig) -> int:
+    """Run connectivity checks against RPC and Pancake factory.
+
+    Prints results to stdout and returns 0 on success, non-zero on failure.
+    """
+    logger = logging.getLogger(__name__)
+    print("Starting self-test: RPC connectivity and Pancake factory check")
+
+    if not config.bsc_rpc_url:
+        print("ERROR: BSC_RPC_URL is not set in environment")
+        return 2
+
+    # Initialize provider and connect
+    from src.blockchain.provider import HTTPProvider, ProviderError
+    from src.api_clients.pancake import PancakeClient
+
+    provider = HTTPProvider(config.bsc_rpc_url)
+    try:
+        print(f"Connecting to RPC: {config.bsc_rpc_url}")
+        provider.connect()
+    except ProviderError as exc:
+        print(f"ERROR: Failed to connect to RPC: {exc}")
+        return 2
+
+    # Retrieve chain id and latest block
+    try:
+        chain_id = provider.w3.eth.chain_id
+        block_number = provider.w3.eth.block_number
+        print(f"Connected: chainId={chain_id}")
+        print(f"Latest block: {block_number}")
+    except Exception as exc:
+        print(f"ERROR: Failed to read chain info: {exc}")
+        provider.disconnect()
+        return 2
+
+    # Pancake factory checks
+    factory = config.pancake_factory_address
+    if not factory:
+        print("WARNING: PANCAKE_FACTORY_ADDRESS not set; skipping factory test")
+        provider.disconnect()
+        return 0
+
+    pc = PancakeClient(provider, factory_address=factory)
+    try:
+        print(f"Querying Pancake factory at: {factory}")
+        total_pairs = pc.get_all_pairs_length()
+        if total_pairs is None:
+            print("ERROR: Failed to retrieve allPairsLength from factory")
+            provider.disconnect()
+            return 2
+        print(f"Pancake factory allPairsLength: {total_pairs}")
+    except ProviderError as exc:
+        print(f"ERROR: Pancake client error: {exc}")
+        provider.disconnect()
+        return 2
+
+    provider.disconnect()
+    print("Self-test completed successfully")
+    return 0
+
+
 def run_check_config(config: AppConfig) -> int:
     """Validate configuration and report issues on stderr; return exit code."""
     try:
@@ -83,6 +144,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("health", help="Run internal health checks and output JSON")
     sub.add_parser("version", help="Print application version")
     sub.add_parser("check-config", help="Validate application configuration")
+    sub.add_parser("self-test", help="Run connectivity self-test: RPC + Pancake factory")
 
     return parser
 
@@ -106,6 +168,9 @@ def main(argv: list[str] | None = None) -> int:
     _install_signal_handlers(stop_event)
 
     try:
+        if args.command == "self-test":
+            return run_self_test(config)
+        
         if args.command == "health":
             return run_health(config)
         if args.command == "version":

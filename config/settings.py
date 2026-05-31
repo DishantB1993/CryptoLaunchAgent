@@ -53,6 +53,7 @@ class AppConfig:
 	data_dir: str = os.getenv("DATA_DIR", "data")
 	logs_dir: str = os.getenv("LOGS_DIR", "logs")
 	app_version: str = os.getenv("APP_VERSION", "0.0.0")
+	pancake_factory_address: Optional[str] = os.getenv("PANCAKE_FACTORY_ADDRESS")
 
 	@classmethod
 	def from_env(cls) -> "AppConfig":
