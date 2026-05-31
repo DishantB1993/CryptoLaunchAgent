@@ -1,7 +1,8 @@
-# CryptoLaunchAgent requirements (Phase 1)
+# CryptoLaunchAgent requirements (Phase 2)
 # Target Python version: 3.12+
-# Add runtime dependencies below, e.g.:
-# requests>=2.31.0
-# web3>=6.0.0
+# Minimal runtime dependencies for configuration and environment loading.
+# Add other dependencies in later phases as required.
 
-# No packages added yet — add only what's needed for Phase 2+.
+# Load environment variables from a .env file during local development
+python-dotenv>=1.0.0
+
