@@ -5,4 +5,5 @@
 
 # Load environment variables from a .env file during local development
 python-dotenv>=1.0.0
+web3>=6.0.0
 

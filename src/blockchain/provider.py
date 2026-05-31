@@ -1,88 +1,118 @@
 """
 Provider abstractions for blockchain connectivity.
 
-This module defines interfaces for HTTP RPC and WebSocket providers. The
-implementations are intentionally minimal stubs (scaffolding) that will be
-extended in later phases. No network calls are made at this time.
+This module implements simple provider wrappers around `web3` providers
+to perform JSON-RPC calls and lightweight websocket subscriptions.
+
+The implementations are minimal but functional: `HTTPProvider` exposes
+`connect()`, `disconnect()`, and `call()` using `web3`. `WSProvider` is
+provided as a thin wrapper for future extension.
 """
 from __future__ import annotations
 
-import abc
+import logging
 from typing import Any, AsyncIterator, Optional
+
+from web3 import Web3
+from web3.exceptions import Web3Exception
+from web3.providers import HTTPProvider as W3HTTPProvider, WebsocketProvider as W3WebsocketProvider
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ProviderError(Exception):
     """Generic provider error."""
 
 
-class Provider(abc.ABC):
-    """Abstract provider interface for blockchain connections.
+class Provider:
+    """Base provider abstraction exposing a `call` method backed by Web3."""
 
-    Implementations should provide safe, non-blocking connect()/disconnect()
-    methods and lightweight `call` for JSON-RPC requests.
-    """
+    w3: Optional[Web3]
 
-    @abc.abstractmethod
     def connect(self) -> None:
-        """Establish any necessary connections. Non-blocking where possible."""
+        raise NotImplementedError
 
-    @abc.abstractmethod
     def disconnect(self) -> None:
-        """Tear down connections and free resources."""
+        raise NotImplementedError
 
-    @abc.abstractmethod
     def call(self, method: str, params: list[Any] | None = None, timeout: float | None = None) -> Any:
-        """Perform a JSON-RPC call and return the parsed result.
-
-        This method should raise `ProviderError` on failure.
-        """
+        raise NotImplementedError
 
 
 class HTTPProvider(Provider):
-    """HTTP JSON-RPC provider interface (scaffold).
+    """HTTP JSON-RPC provider backed by `web3`.
 
-    Concrete implementations will perform `eth_chainId`, `eth_blockNumber`,
-    and other read-only methods.
+    This provider performs synchronous JSON-RPC calls via Web3's
+    `manager.request_blocking` and exposes a `w3` instance for higher
+    level helpers (contract calls, encoding).
     """
 
     def __init__(self, rpc_url: str, timeout: float = 10.0) -> None:
         self.rpc_url = rpc_url
         self.timeout = timeout
+        self.w3: Optional[Web3] = None
 
     def connect(self) -> None:
-        """HTTP provider requires no persistent connection by default."""
-        return None
+        try:
+            provider = W3HTTPProvider(self.rpc_url, request_kwargs={"timeout": int(self.timeout)})
+            self.w3 = Web3(provider)
+            # Simple connectivity assertion
+            if not self.w3.is_connected():
+                raise ProviderError(f"Unable to connect to RPC at {self.rpc_url}")
+        except Web3Exception as exc:
+            raise ProviderError(str(exc)) from exc
 
     def disconnect(self) -> None:
-        return None
+        # HTTP provider uses short-lived connections; nothing to do
+        self.w3 = None
 
     def call(self, method: str, params: list[Any] | None = None, timeout: float | None = None) -> Any:
-        raise ProviderError("HTTPProvider.call not implemented — this is a scaffold")
+        if not self.w3:
+            raise ProviderError("Provider is not connected")
+        try:
+            # web3 manager.request_blocking performs the JSON-RPC call
+            return self.w3.manager.request_blocking(method, params or [])
+        except Web3Exception as exc:
+            raise ProviderError(str(exc)) from exc
 
 
 class WSProvider(Provider):
-    """WebSocket provider interface (scaffold).
+    """WebSocket provider wrapper using `web3`'s WebsocketProvider.
 
-    Implementations will manage connection lifecycle and subscription
-    streams.
+    Note: this is a minimal wrapper. For subscription handling and
+    async iteration a higher-level async implementation will be added
+    in later phases.
     """
 
     def __init__(self, ws_url: str, timeout: float = 10.0) -> None:
         self.ws_url = ws_url
         self.timeout = timeout
+        self.w3: Optional[Web3] = None
 
     def connect(self) -> None:
-        raise ProviderError("WSProvider.connect not implemented — this is a scaffold")
+        try:
+            provider = W3WebsocketProvider(self.ws_url)
+            self.w3 = Web3(provider)
+            if not self.w3.is_connected():
+                raise ProviderError(f"Unable to connect to WS at {self.ws_url}")
+        except Web3Exception as exc:
+            raise ProviderError(str(exc)) from exc
 
     def disconnect(self) -> None:
-        raise ProviderError("WSProvider.disconnect not implemented — this is a scaffold")
+        # web3 websocket provider does not expose explicit close API in all transports
+        self.w3 = None
 
     def call(self, method: str, params: list[Any] | None = None, timeout: float | None = None) -> Any:
-        raise ProviderError("WSProvider.call not implemented — this is a scaffold")
+        if not self.w3:
+            raise ProviderError("WSProvider is not connected")
+        try:
+            return self.w3.manager.request_blocking(method, params or [])
+        except Web3Exception as exc:
+            raise ProviderError(str(exc)) from exc
 
-    def subscribe(self) -> AsyncIterator[Any]:  # pragma: no cover - interface
-        """Return an async iterator of subscription events."""
-        raise ProviderError("WSProvider.subscribe not implemented — this is a scaffold")
+    def subscribe(self) -> AsyncIterator[Any]:  # pragma: no cover - scaffold
+        raise ProviderError("WSProvider.subscribe is not yet implemented")
 
 
 __all__ = ["Provider", "HTTPProvider", "WSProvider", "ProviderError"]
