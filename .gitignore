@@ -1,0 +1,28 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+env/
+venv/
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# IDEs and editors
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Runtime files and folders used during development
+.env
+logs/
+data/
+
+# Python packaging
+pip-wheel-metadata/
