@@ -15,7 +15,11 @@ from typing import Any, AsyncIterator, Optional
 
 from web3 import Web3
 from web3.exceptions import Web3Exception
-from web3.providers import HTTPProvider as W3HTTPProvider, WebsocketProvider as W3WebsocketProvider
+# Import providers from explicit submodules to remain compatible with web3 v7
+# web3 v7 exposes HTTPProvider in `web3.providers.rpc` and legacy websocket
+# implementations under `web3.providers.legacy_websocket`.
+from web3.providers.rpc import HTTPProvider as W3HTTPProvider
+from web3.providers.legacy_websocket import LegacyWebSocketProvider as W3WebsocketProvider
 
 
 LOGGER = logging.getLogger(__name__)

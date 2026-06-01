@@ -60,7 +60,8 @@ class PancakeClient:
             raise ProviderError("Provider does not have an active Web3 instance")
 
         try:
-            contract = self.provider.w3.eth.contract(address=self.factory_address, abi=FACTORY_ABI)
+            factory_addr = self.provider.w3.to_checksum_address(self.factory_address)
+            contract = self.provider.w3.eth.contract(address=factory_addr, abi=FACTORY_ABI)
             pair_addr = contract.functions.getPair(token_a, token_b).call()
             if not pair_addr or int(pair_addr, 16) == 0:
                 return None
@@ -83,10 +84,11 @@ class PancakeClient:
                 {"inputs": [], "name": "token0", "outputs": [{"internalType": "address", "name": "", "type": "address"}], "stateMutability": "view", "type": "function"},
                 {"inputs": [], "name": "token1", "outputs": [{"internalType": "address", "name": "", "type": "address"}], "stateMutability": "view", "type": "function"},
             ]
-            contract = self.provider.w3.eth.contract(address=pair_address, abi=PAIR_ABI)
+            pair_addr = self.provider.w3.to_checksum_address(pair_address)
+            contract = self.provider.w3.eth.contract(address=pair_addr, abi=PAIR_ABI)
             t0 = contract.functions.token0().call()
             t1 = contract.functions.token1().call()
-            return PairInfo(address=pair_address, token0=self.provider.w3.to_checksum_address(t0), token1=self.provider.w3.to_checksum_address(t1))
+            return PairInfo(address=pair_addr, token0=self.provider.w3.to_checksum_address(t0), token1=self.provider.w3.to_checksum_address(t1))
         except Exception:
             return None
 
@@ -104,11 +106,12 @@ class PancakeClient:
             FACTORY_ABI_LEN = [
                 {"inputs": [], "name": "allPairsLength", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}
             ]
-            contract = self.provider.w3.eth.contract(address=self.factory_address, abi=FACTORY_ABI_LEN)
+            factory_addr = self.provider.w3.to_checksum_address(self.factory_address)
+            contract = self.provider.w3.eth.contract(address=factory_addr, abi=FACTORY_ABI_LEN)
             length = contract.functions.allPairsLength().call()
             return int(length)
-        except Exception:
-            return None
+        except Exception as exc:
+            raise ProviderError(f"Failed to get allPairsLength: {exc}") from exc
 
 
 __all__ = ["PancakeClient", "PairInfo"]
