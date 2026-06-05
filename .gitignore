@@ -27,3 +27,6 @@ data/
 
 # Python packaging
 pip-wheel-metadata/
+
+# SQLite databases
+*.sqlite3

@@ -96,9 +96,10 @@ def main(argv: list[str] | None = None) -> int:
     # Prepare contract for decoding
     contract = w3.eth.contract(address=factory_addr, abi=[PAIR_CREATED_EVENT_ABI])
 
-    # Compute event topic (signature)
+    # Compute event topic (signature) and ensure a single 0x prefix
     event_signature_text = "PairCreated(address,address,address,uint256)"
-    event_topic = Web3.keccak(text=event_signature_text).hex()
+    raw_topic = Web3.keccak(text=event_signature_text).hex()
+    event_topic = raw_topic if raw_topic.startswith("0x") else f"0x{raw_topic}"
 
     # Fetch logs (attempt range fetch; fall back to per-block fetch on failure)
     logs = []
@@ -122,6 +123,14 @@ def main(argv: list[str] | None = None) -> int:
                 if blk_logs:
                     logs.extend(blk_logs)
             except Exception as exc_block:
+                # If provider returns a rate-limit / "limit exceeded" error, stop further blocks.
+                try:
+                    err = exc_block.args[0]
+                    if isinstance(err, dict) and err.get("code") == -32005:
+                        print(f"WARN: provider rate limit at block {b}: {err}; stopping per-block fallback")
+                        break
+                except Exception:
+                    pass
                 print(f"WARN: get_logs failed for block {b}: {exc_block}")
                 continue
 
