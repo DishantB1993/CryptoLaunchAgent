@@ -29,32 +29,38 @@ def main():
         print("Failed to get latest block:", e)
         sys.exit(2)
 
-    # search recent window
-    window = 200
-    start = max(0, latest - window)
+    # scan latest-20 .. latest with 1-block chunks
+    start = max(0, latest - 20)
     end = latest
 
-    tried = {}
-    for chunk in [1, 2, 5, 10, 25, 50]:
-        print(f"Trying chunk_size={chunk} for range {start}..{end}")
+    for b in range(start, end + 1):
         try:
-            logs = fetch_logs_chunked(manager, factory, start, end, topic0, chunk_size=chunk)
-            print(f"chunk_size={chunk} returned {len(logs)} logs")
-            if logs:
-                for log in logs:
-                    decoded = decode_paircreated_log(Web3, log)
-                    if decoded and decoded.get("pair"):
-                        print("Found PairCreated:")
-                        print("pair", decoded.get("pair"))
-                        print("token0", decoded.get("token0"))
-                        print("token1", decoded.get("token1"))
-                        tx = Web3.to_hex(decoded.get("tx_hash")) if decoded.get("tx_hash") else None
-                        print("tx", tx)
-                        print("block", decoded.get("block_number"))
-                        return
+            logs = fetch_logs_chunked(manager, factory, b, b, topic0, chunk_size=1)
         except Exception as e:
-            print(f"chunk_size={chunk} exception: {e}")
-    print("No PairCreated found in recent window")
+            print(f"get_logs exception for block {b}: {e}")
+            continue
+
+        if not logs:
+            continue
+
+        for log in logs:
+            decoded = decode_paircreated_log(Web3, log)
+            if decoded and decoded.get("pair"):
+                pair = decoded.get("pair")
+                token0 = decoded.get("token0")
+                token1 = decoded.get("token1")
+                tx = decoded.get("tx_hash")
+                if tx and not isinstance(tx, str):
+                    tx = Web3.to_hex(tx)
+                block_number = decoded.get("block_number")
+                print(f"pair={pair}")
+                print(f"token0={token0}")
+                print(f"token1={token1}")
+                print(f"tx={tx}")
+                print(f"block={block_number}")
+                return
+
+    print("No PairCreated events found in latest-20..latest")
 
 
 if __name__ == "__main__":

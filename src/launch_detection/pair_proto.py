@@ -23,6 +23,8 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from src.blockchain.provider import HTTPProvider, ProviderError
+from src.launch_detection.rpc_manager import RPCManager
+from src.db.sqlite_storage import init_db
 
 LOGGER = logging.getLogger(__name__)
 
@@ -101,10 +103,13 @@ def main(argv: list[str] | None = None) -> int:
     raw_topic = Web3.keccak(text=event_signature_text).hex()
     event_topic = raw_topic if raw_topic.startswith("0x") else f"0x{raw_topic}"
 
-    # Fetch logs (attempt range fetch; fall back to per-block fetch on failure)
+    # Route get_logs calls through RPCManager to get retries, rotation and detailed logging
     logs = []
+    # use an in-memory sqlite DB for RPC health tracking in this prototype
+    db_conn = init_db(":memory:")
+    manager = RPCManager([rpc], db_conn)
     try:
-        logs = w3.eth.get_logs({
+        logs = manager.get_logs({
             "fromBlock": from_block,
             "toBlock": to_block,
             "address": factory_addr,
@@ -114,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"WARN: Bulk get_logs failed: {exc}; falling back to per-block queries")
         for b in range(from_block, to_block + 1):
             try:
-                blk_logs = w3.eth.get_logs({
+                blk_logs = manager.get_logs({
                     "fromBlock": b,
                     "toBlock": b,
                     "address": factory_addr,

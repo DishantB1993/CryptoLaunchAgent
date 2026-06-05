@@ -142,6 +142,52 @@ def run_watch_loop(db_conn, rpc_urls, factory_addr, poll_interval: int = 3, chun
                             tx = Web3.to_hex(tx)
                         blk = decoded["block_number"]
                         print(f"PairCreated - pair={pair} token0={token0} token1={token1} factory={factory_addr} tx={tx} block={blk}")
+
+                        # Save token metadata if not already present (simple caching)
+                        try:
+                            existing0 = dbmod.get_token(db_conn, Web3.to_checksum_address(token0))
+                        except Exception:
+                            existing0 = None
+                        if not existing0:
+                            try:
+                                meta0 = manager.get_token_metadata(token0)
+                            except Exception:
+                                meta0 = {"name": None, "symbol": None, "decimals": None, "total_supply": None}
+                            dbmod.save_token(db_conn, Web3.to_checksum_address(token0), meta0.get("name"), meta0.get("symbol"), meta0.get("decimals"), meta0.get("total_supply"), blk)
+                            # token security analysis (MVP) - only if not already analyzed
+                            try:
+                                sec0 = dbmod.get_token_security(db_conn, Web3.to_checksum_address(token0))
+                            except Exception:
+                                sec0 = None
+                            if not sec0:
+                                try:
+                                    analysis0 = manager.get_token_security(token0, meta0.get("total_supply"))
+                                except Exception:
+                                    analysis0 = {"owner_address": None, "is_ownership_renounced": False, "total_supply": meta0.get("total_supply"), "owner_balance": None, "owner_percent": None, "has_mint_function": False}
+                                dbmod.save_token_security(db_conn, Web3.to_checksum_address(token0), analysis0.get("owner_address"), analysis0.get("is_ownership_renounced"), analysis0.get("total_supply"), analysis0.get("owner_balance"), analysis0.get("owner_percent"), analysis0.get("has_mint_function"))
+
+                        try:
+                            existing1 = dbmod.get_token(db_conn, Web3.to_checksum_address(token1))
+                        except Exception:
+                            existing1 = None
+                        if not existing1:
+                            try:
+                                meta1 = manager.get_token_metadata(token1)
+                            except Exception:
+                                meta1 = {"name": None, "symbol": None, "decimals": None, "total_supply": None}
+                            dbmod.save_token(db_conn, Web3.to_checksum_address(token1), meta1.get("name"), meta1.get("symbol"), meta1.get("decimals"), meta1.get("total_supply"), blk)
+                            try:
+                                sec1 = dbmod.get_token_security(db_conn, Web3.to_checksum_address(token1))
+                            except Exception:
+                                sec1 = None
+                            if not sec1:
+                                try:
+                                    analysis1 = manager.get_token_security(token1, meta1.get("total_supply"))
+                                except Exception:
+                                    analysis1 = {"owner_address": None, "is_ownership_renounced": False, "total_supply": meta1.get("total_supply"), "owner_balance": None, "owner_percent": None, "has_mint_function": False}
+                                dbmod.save_token_security(db_conn, Web3.to_checksum_address(token1), analysis1.get("owner_address"), analysis1.get("is_ownership_renounced"), analysis1.get("total_supply"), analysis1.get("owner_balance"), analysis1.get("owner_percent"), analysis1.get("has_mint_function"))
+
+                        # Save pair record
                         dbmod.save_pair(db_conn, pair, token0, token1, factory_addr, tx, blk)
                 # advance last to safe_block
                 dbmod.set_last_block(db_conn, safe_block)
