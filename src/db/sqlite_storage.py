@@ -72,6 +72,11 @@ def init_db(path: str) -> sqlite3.Connection:
     except Exception:
         # ignore if column already exists
         pass
+    try:
+        cur.execute("ALTER TABLE token_security ADD COLUMN analysis_ts INTEGER")
+    except Exception:
+        # ignore if column already exists
+        pass
     conn.commit()
     return conn
 

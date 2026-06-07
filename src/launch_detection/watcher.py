@@ -164,7 +164,7 @@ def run_watch_loop(db_conn, rpc_urls, factory_addr, poll_interval: int = 3, chun
                                     analysis0 = manager.get_token_security(token0, meta0.get("total_supply"))
                                 except Exception:
                                     analysis0 = {"owner_address": None, "is_ownership_renounced": False, "total_supply": meta0.get("total_supply"), "owner_balance": None, "owner_percent": None, "has_mint_function": False}
-                                dbmod.save_token_security(db_conn, Web3.to_checksum_address(token0), analysis0.get("owner_address"), analysis0.get("is_ownership_renounced"), analysis0.get("total_supply"), analysis0.get("owner_balance"), analysis0.get("owner_percent"), analysis0.get("has_mint_function"))
+                                dbmod.save_token_security(db_conn, Web3.to_checksum_address(token0), analysis0.get("owner_address"), analysis0.get("is_ownership_renounced"), analysis0.get("total_supply"), analysis0.get("owner_balance"), analysis0.get("owner_percent"), analysis0.get("has_mint_function"), analysis0.get("analysis_block"), analysis0.get("analysis_ts"))
 
                         try:
                             existing1 = dbmod.get_token(db_conn, Web3.to_checksum_address(token1))
@@ -185,7 +185,7 @@ def run_watch_loop(db_conn, rpc_urls, factory_addr, poll_interval: int = 3, chun
                                     analysis1 = manager.get_token_security(token1, meta1.get("total_supply"))
                                 except Exception:
                                     analysis1 = {"owner_address": None, "is_ownership_renounced": False, "total_supply": meta1.get("total_supply"), "owner_balance": None, "owner_percent": None, "has_mint_function": False}
-                                dbmod.save_token_security(db_conn, Web3.to_checksum_address(token1), analysis1.get("owner_address"), analysis1.get("is_ownership_renounced"), analysis1.get("total_supply"), analysis1.get("owner_balance"), analysis1.get("owner_percent"), analysis1.get("has_mint_function"))
+                                dbmod.save_token_security(db_conn, Web3.to_checksum_address(token1), analysis1.get("owner_address"), analysis1.get("is_ownership_renounced"), analysis1.get("total_supply"), analysis1.get("owner_balance"), analysis1.get("owner_percent"), analysis1.get("has_mint_function"), analysis1.get("analysis_block"), analysis1.get("analysis_ts"))
 
                         # Save pair record
                         dbmod.save_pair(db_conn, pair, token0, token1, factory_addr, tx, blk)
