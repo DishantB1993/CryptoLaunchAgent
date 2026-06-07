@@ -66,6 +66,25 @@ def init_db(path: str) -> sqlite3.Connection:
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS token_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_address TEXT NOT NULL,
+            pair_address TEXT,
+            score REAL NOT NULL,
+            confidence REAL NOT NULL,
+            decision TEXT NOT NULL,
+            risk_flags TEXT,
+            component_scores TEXT,
+            reason TEXT,
+            scoring_version TEXT NOT NULL,
+            scored_block INTEGER,
+            scored_ts INTEGER NOT NULL,
+            UNIQUE(token_address, pair_address, scoring_version)
+        )
+        """
+    )
     # Ensure legacy DBs get the new column if missing
     try:
         cur.execute("ALTER TABLE token_security ADD COLUMN analysis_block INTEGER")
@@ -247,3 +266,69 @@ def save_token_security(conn, token_address: str, owner_address: str, is_ownersh
         ),
     )
     conn.commit()
+
+
+def save_token_score(
+    conn,
+    token_address: str,
+    pair_address: str,
+    score: float,
+    confidence: float,
+    decision: str,
+    risk_flags: str,
+    component_scores: str,
+    reason: str,
+    scoring_version: str,
+    scored_block: int = None,
+    scored_ts: int = None,
+):
+    cur = conn.cursor()
+    if scored_ts is None:
+        scored_ts = int(time.time())
+    cur.execute(
+        "INSERT OR REPLACE INTO token_scores(token_address,pair_address,score,confidence,decision,risk_flags,component_scores,reason,scoring_version,scored_block,scored_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            token_address,
+            pair_address,
+            score,
+            confidence,
+            decision,
+            risk_flags,
+            component_scores,
+            reason,
+            scoring_version,
+            scored_block,
+            scored_ts,
+        ),
+    )
+    conn.commit()
+
+
+def get_latest_token_score(conn, token_address: str, pair_address: str = None, scoring_version: str = None):
+    cur = conn.cursor()
+    query = "SELECT token_address,pair_address,score,confidence,decision,risk_flags,component_scores,reason,scoring_version,scored_block,scored_ts FROM token_scores WHERE token_address = ?"
+    params = [token_address]
+    if pair_address is not None:
+        query += " AND pair_address = ?"
+        params.append(pair_address)
+    if scoring_version is not None:
+        query += " AND scoring_version = ?"
+        params.append(scoring_version)
+    query += " ORDER BY scored_ts DESC, id DESC LIMIT 1"
+    cur.execute(query, tuple(params))
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "token_address": row[0],
+        "pair_address": row[1],
+        "score": row[2],
+        "confidence": row[3],
+        "decision": row[4],
+        "risk_flags": row[5],
+        "component_scores": row[6],
+        "reason": row[7],
+        "scoring_version": row[8],
+        "scored_block": row[9],
+        "scored_ts": row[10],
+    }

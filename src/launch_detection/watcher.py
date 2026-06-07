@@ -7,6 +7,7 @@ from web3 import Web3
 
 from src.db import sqlite_storage as dbmod
 from src.launch_detection.rpc_manager import RPCManager
+from src.scoring.launch_score import SCORING_VERSION, candidate_tokens, score_token
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +190,25 @@ def run_watch_loop(db_conn, rpc_urls, factory_addr, poll_interval: int = 3, chun
 
                         # Save pair record
                         dbmod.save_pair(db_conn, pair, token0, token1, factory_addr, tx, blk)
+
+                        for candidate in candidate_tokens(token0, token1):
+                            candidate_addr = Web3.to_checksum_address(candidate)
+                            token_data = dbmod.get_token(db_conn, candidate_addr)
+                            security_data = dbmod.get_token_security(db_conn, candidate_addr)
+                            score_result = score_token(token_data, security_data, pair_address=pair)
+                            dbmod.save_token_score(
+                                db_conn,
+                                candidate_addr,
+                                pair,
+                                score_result["score"],
+                                score_result["confidence"],
+                                score_result["decision"],
+                                score_result["risk_flags_json"],
+                                score_result["component_scores_json"],
+                                score_result["reason"],
+                                SCORING_VERSION,
+                                scored_block=security_data.get("analysis_block") if security_data else blk,
+                            )
                 # advance last to safe_block
                 dbmod.set_last_block(db_conn, safe_block)
                 last = safe_block
