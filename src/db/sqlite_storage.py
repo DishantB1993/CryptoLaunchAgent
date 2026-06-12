@@ -85,6 +85,43 @@ def init_db(path: str) -> sqlite3.Connection:
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidates (
+            token_address TEXT NOT NULL,
+            pair_address TEXT NOT NULL,
+            status TEXT NOT NULL,
+            latest_score_id INTEGER NOT NULL,
+            first_seen_block INTEGER,
+            first_seen_ts INTEGER,
+            created_ts INTEGER NOT NULL,
+            updated_ts INTEGER NOT NULL,
+            promoted_block INTEGER,
+            promoted_ts INTEGER,
+            demoted_block INTEGER,
+            demoted_ts INTEGER,
+            status_reason TEXT,
+            observations_count INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (token_address, pair_address)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_address TEXT NOT NULL,
+            pair_address TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            from_status TEXT,
+            to_status TEXT,
+            score_id INTEGER,
+            status_reason TEXT,
+            block_number INTEGER,
+            event_ts INTEGER NOT NULL
+        )
+        """
+    )
     # Ensure legacy DBs get the new column if missing
     try:
         cur.execute("ALTER TABLE token_security ADD COLUMN analysis_block INTEGER")
@@ -302,11 +339,17 @@ def save_token_score(
         ),
     )
     conn.commit()
+    cur.execute(
+        "SELECT id FROM token_scores WHERE token_address = ? AND pair_address = ? AND scoring_version = ?",
+        (token_address, pair_address, scoring_version),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
 
 
 def get_latest_token_score(conn, token_address: str, pair_address: str = None, scoring_version: str = None):
     cur = conn.cursor()
-    query = "SELECT token_address,pair_address,score,confidence,decision,risk_flags,component_scores,reason,scoring_version,scored_block,scored_ts FROM token_scores WHERE token_address = ?"
+    query = "SELECT id,token_address,pair_address,score,confidence,decision,risk_flags,component_scores,reason,scoring_version,scored_block,scored_ts FROM token_scores WHERE token_address = ?"
     params = [token_address]
     if pair_address is not None:
         query += " AND pair_address = ?"
@@ -320,15 +363,184 @@ def get_latest_token_score(conn, token_address: str, pair_address: str = None, s
     if not row:
         return None
     return {
+        "id": row[0],
+        "token_address": row[1],
+        "pair_address": row[2],
+        "score": row[3],
+        "confidence": row[4],
+        "decision": row[5],
+        "risk_flags": row[6],
+        "component_scores": row[7],
+        "reason": row[8],
+        "scoring_version": row[9],
+        "scored_block": row[10],
+        "scored_ts": row[11],
+    }
+
+
+def get_candidate(conn, token_address: str, pair_address: str):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT token_address,pair_address,status,latest_score_id,first_seen_block,first_seen_ts,created_ts,updated_ts,promoted_block,promoted_ts,demoted_block,demoted_ts,status_reason,observations_count FROM candidates WHERE token_address = ? AND pair_address = ?",
+        (token_address, pair_address),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
         "token_address": row[0],
         "pair_address": row[1],
-        "score": row[2],
-        "confidence": row[3],
-        "decision": row[4],
-        "risk_flags": row[5],
-        "component_scores": row[6],
-        "reason": row[7],
-        "scoring_version": row[8],
-        "scored_block": row[9],
-        "scored_ts": row[10],
+        "status": row[2],
+        "latest_score_id": row[3],
+        "first_seen_block": row[4],
+        "first_seen_ts": row[5],
+        "created_ts": row[6],
+        "updated_ts": row[7],
+        "promoted_block": row[8],
+        "promoted_ts": row[9],
+        "demoted_block": row[10],
+        "demoted_ts": row[11],
+        "status_reason": row[12],
+        "observations_count": row[13],
     }
+
+
+def save_candidate(
+    conn,
+    token_address: str,
+    pair_address: str,
+    status: str,
+    latest_score_id: int,
+    first_seen_block: int = None,
+    first_seen_ts: int = None,
+    block_number: int = None,
+    status_reason: str = None,
+    event_ts: int = None,
+):
+    cur = conn.cursor()
+    now = event_ts if event_ts is not None else int(time.time())
+    existing = get_candidate(conn, token_address, pair_address)
+    promoted_block = None
+    promoted_ts = None
+    demoted_block = None
+    demoted_ts = None
+    if status in ("candidate", "watchlist"):
+        promoted_block = block_number
+        promoted_ts = now
+    if status in ("risky", "reject", "expired"):
+        demoted_block = block_number
+        demoted_ts = now
+
+    if existing:
+        cur.execute(
+            """
+            UPDATE candidates
+            SET status = ?,
+                latest_score_id = ?,
+                updated_ts = ?,
+                promoted_block = COALESCE(promoted_block, ?),
+                promoted_ts = COALESCE(promoted_ts, ?),
+                demoted_block = ?,
+                demoted_ts = ?,
+                status_reason = ?,
+                observations_count = observations_count + 1
+            WHERE token_address = ? AND pair_address = ?
+            """,
+            (
+                status,
+                latest_score_id,
+                now,
+                promoted_block,
+                promoted_ts,
+                demoted_block if status in ("risky", "reject", "expired") else existing["demoted_block"],
+                demoted_ts if status in ("risky", "reject", "expired") else existing["demoted_ts"],
+                status_reason,
+                token_address,
+                pair_address,
+            ),
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO candidates(token_address,pair_address,status,latest_score_id,first_seen_block,first_seen_ts,created_ts,updated_ts,promoted_block,promoted_ts,demoted_block,demoted_ts,status_reason,observations_count)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                token_address,
+                pair_address,
+                status,
+                latest_score_id,
+                first_seen_block,
+                first_seen_ts,
+                now,
+                now,
+                promoted_block,
+                promoted_ts,
+                demoted_block,
+                demoted_ts,
+                status_reason,
+                1,
+            ),
+        )
+    conn.commit()
+    return get_candidate(conn, token_address, pair_address)
+
+
+def save_candidate_event(
+    conn,
+    token_address: str,
+    pair_address: str,
+    event_type: str,
+    from_status: str = None,
+    to_status: str = None,
+    score_id: int = None,
+    status_reason: str = None,
+    block_number: int = None,
+    event_ts: int = None,
+):
+    cur = conn.cursor()
+    if event_ts is None:
+        event_ts = int(time.time())
+    cur.execute(
+        "INSERT INTO candidate_events(token_address,pair_address,event_type,from_status,to_status,score_id,status_reason,block_number,event_ts) VALUES(?,?,?,?,?,?,?,?,?)",
+        (
+            token_address,
+            pair_address,
+            event_type,
+            from_status,
+            to_status,
+            score_id,
+            status_reason,
+            block_number,
+            event_ts,
+        ),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def list_active_candidates(conn):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT token_address,pair_address,status,latest_score_id,first_seen_block,first_seen_ts,created_ts,updated_ts,promoted_block,promoted_ts,demoted_block,demoted_ts,status_reason,observations_count FROM candidates WHERE status IN ('candidate','watchlist','risky') ORDER BY updated_ts DESC"
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "token_address": row[0],
+            "pair_address": row[1],
+            "status": row[2],
+            "latest_score_id": row[3],
+            "first_seen_block": row[4],
+            "first_seen_ts": row[5],
+            "created_ts": row[6],
+            "updated_ts": row[7],
+            "promoted_block": row[8],
+            "promoted_ts": row[9],
+            "demoted_block": row[10],
+            "demoted_ts": row[11],
+            "status_reason": row[12],
+            "observations_count": row[13],
+        }
+        for row in rows
+    ]

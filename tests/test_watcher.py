@@ -154,3 +154,18 @@ def test_watch_loop_scores_non_base_token_only(monkeypatch):
     assert json.loads(new_token_score["risk_flags"]) == ["limited_v1_signal_set"]
     assert json.loads(new_token_score["component_scores"])["mint"] == 15
     assert base_token_score is None
+
+    candidate = dbmod.get_candidate(
+        conn,
+        Web3.to_checksum_address(new_token),
+        Web3.to_checksum_address(pair),
+    )
+    assert candidate is not None
+    assert candidate["status"] == "candidate"
+    assert candidate["latest_score_id"] == new_token_score["id"]
+
+    cur = conn.cursor()
+    cur.execute("SELECT event_type, to_status FROM candidate_events WHERE token_address = ?", (Web3.to_checksum_address(new_token),))
+    event = cur.fetchone()
+    assert event[0] == "candidate_created"
+    assert event[1] == "candidate"

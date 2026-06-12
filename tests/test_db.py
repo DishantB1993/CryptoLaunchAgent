@@ -118,3 +118,66 @@ def test_save_and_get_latest_token_score():
     assert score["scored_ts"] == 1710000000
     conn.close()
     os.remove(path)
+
+
+def test_candidate_tables_are_created():
+    fd, path = tempfile.mkstemp(prefix="test_db_", suffix=".sqlite3")
+    os.close(fd)
+    conn = dbmod.init_db(path)
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    tables = {row[0] for row in cur.fetchall()}
+    assert "candidates" in tables
+    assert "candidate_events" in tables
+    conn.close()
+    os.remove(path)
+
+
+def test_save_candidate_and_event_helpers():
+    fd, path = tempfile.mkstemp(prefix="test_db_", suffix=".sqlite3")
+    os.close(fd)
+    conn = dbmod.init_db(path)
+    score_id = dbmod.save_token_score(
+        conn,
+        "0xT",
+        "0xP",
+        90.0,
+        90.0,
+        "candidate",
+        json.dumps(["limited_v1_signal_set"]),
+        json.dumps({"ownership": 20}),
+        "No v1 risk flags detected; limited checks only.",
+        "launch_score_v1",
+        scored_block=123,
+        scored_ts=1710000000,
+    )
+    candidate = dbmod.save_candidate(
+        conn,
+        "0xT",
+        "0xP",
+        "candidate",
+        score_id,
+        first_seen_block=123,
+        block_number=123,
+        status_reason="No v1 risk flags detected; limited checks only.",
+        event_ts=1710000000,
+    )
+    assert candidate["status"] == "candidate"
+    assert candidate["latest_score_id"] == score_id
+    assert candidate["promoted_block"] == 123
+    event_id = dbmod.save_candidate_event(
+        conn,
+        "0xT",
+        "0xP",
+        "candidate_created",
+        to_status="candidate",
+        score_id=score_id,
+        block_number=123,
+        event_ts=1710000000,
+    )
+    assert event_id is not None
+    active = dbmod.list_active_candidates(conn)
+    assert len(active) == 1
+    assert active[0]["token_address"] == "0xT"
+    conn.close()
+    os.remove(path)

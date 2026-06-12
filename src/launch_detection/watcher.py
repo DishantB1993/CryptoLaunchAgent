@@ -5,6 +5,7 @@ from typing import Optional
 
 from web3 import Web3
 
+from src.candidates.tracker import track_candidate_from_score
 from src.db import sqlite_storage as dbmod
 from src.launch_detection.rpc_manager import RPCManager
 from src.scoring.launch_score import SCORING_VERSION, candidate_tokens, score_token
@@ -196,7 +197,7 @@ def run_watch_loop(db_conn, rpc_urls, factory_addr, poll_interval: int = 3, chun
                             token_data = dbmod.get_token(db_conn, candidate_addr)
                             security_data = dbmod.get_token_security(db_conn, candidate_addr)
                             score_result = score_token(token_data, security_data, pair_address=pair)
-                            dbmod.save_token_score(
+                            score_id = dbmod.save_token_score(
                                 db_conn,
                                 candidate_addr,
                                 pair,
@@ -208,6 +209,14 @@ def run_watch_loop(db_conn, rpc_urls, factory_addr, poll_interval: int = 3, chun
                                 score_result["reason"],
                                 SCORING_VERSION,
                                 scored_block=security_data.get("analysis_block") if security_data else blk,
+                            )
+                            track_candidate_from_score(
+                                db_conn,
+                                candidate_addr,
+                                pair,
+                                score_id,
+                                score_result,
+                                block_number=blk,
                             )
                 # advance last to safe_block
                 dbmod.set_last_block(db_conn, safe_block)
