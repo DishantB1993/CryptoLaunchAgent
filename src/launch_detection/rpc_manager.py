@@ -367,3 +367,75 @@ class RPCManager:
                 time.sleep(0.1)
 
         return {"owner_address": None, "is_ownership_renounced": False, "total_supply": None, "owner_balance": None, "owner_percent": None, "has_mint_function": False, "analysis_block": None, "analysis_ts": None}
+
+    def get_pair_liquidity(self, pair_address: str) -> Dict:
+        """
+        Read PancakeSwap V2 pair reserve state using only on-chain calls.
+        Returns reserve strings and timing metadata, or None-like values if all RPCs fail.
+        """
+        pair_abi = [
+            {"constant": True, "inputs": [], "name": "token0", "outputs": [{"name": "", "type": "address"}], "type": "function"},
+            {"constant": True, "inputs": [], "name": "token1", "outputs": [{"name": "", "type": "address"}], "type": "function"},
+            {"constant": True, "inputs": [], "name": "getReserves", "outputs": [{"name": "_reserve0", "type": "uint112"}, {"name": "_reserve1", "type": "uint112"}, {"name": "_blockTimestampLast", "type": "uint32"}], "type": "function"},
+            {"constant": True, "inputs": [], "name": "totalSupply", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+        ]
+        addr = Web3.to_checksum_address(pair_address)
+
+        for _ in range(len(self.urls)):
+            url = self._current_url()
+            w3 = self._w3_for(url)
+            try:
+                try:
+                    analysis_block = w3.eth.block_number
+                except Exception:
+                    analysis_block = None
+                try:
+                    if analysis_block is not None:
+                        block_obj = w3.eth.get_block(analysis_block)
+                        analysis_ts = int(block_obj.timestamp)
+                    else:
+                        analysis_ts = int(time.time())
+                except Exception:
+                    analysis_ts = int(time.time())
+
+                contract = w3.eth.contract(address=addr, abi=pair_abi)
+                token0 = Web3.to_checksum_address(contract.functions.token0().call())
+                token1 = Web3.to_checksum_address(contract.functions.token1().call())
+                reserves = contract.functions.getReserves().call()
+                total_supply = contract.functions.totalSupply().call()
+
+                try:
+                    record_rpc_success(self.db, url)
+                except Exception:
+                    logger.debug("record_rpc_success failed for url=%s", url)
+
+                return {
+                    "pair_address": addr,
+                    "token0": token0,
+                    "token1": token1,
+                    "reserve0": str(int(reserves[0])),
+                    "reserve1": str(int(reserves[1])),
+                    "block_timestamp_last": int(reserves[2]),
+                    "pair_total_supply": str(int(total_supply)),
+                    "analysis_block": analysis_block,
+                    "analysis_ts": analysis_ts,
+                }
+            except Exception:
+                try:
+                    record_rpc_failure(self.db, url)
+                except Exception:
+                    logger.debug("record_rpc_failure failed for url=%s", url)
+                self.rotate()
+                time.sleep(0.1)
+
+        return {
+            "pair_address": addr,
+            "token0": None,
+            "token1": None,
+            "reserve0": None,
+            "reserve1": None,
+            "block_timestamp_last": None,
+            "pair_total_supply": None,
+            "analysis_block": None,
+            "analysis_ts": None,
+        }

@@ -68,6 +68,19 @@ def test_watch_loop_persists_security_analysis_timing(monkeypatch):
                 "analysis_ts": 1710000000,
             }
 
+        def get_pair_liquidity(self, pair_address):
+            return {
+                "pair_address": pair_address,
+                "token0": token0,
+                "token1": token1,
+                "reserve0": "1000000",
+                "reserve1": "100",
+                "block_timestamp_last": 1710000000,
+                "pair_total_supply": "10000",
+                "analysis_block": 123456,
+                "analysis_ts": 1710000000,
+            }
+
     monkeypatch.setattr(watcher, "RPCManager", FakeRPCManager)
     monkeypatch.setattr(watcher, "fetch_logs_chunked", lambda *args, **kwargs: [log])
     monkeypatch.setattr(watcher.time, "sleep", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt))
@@ -123,6 +136,19 @@ def test_watch_loop_scores_non_base_token_only(monkeypatch):
                 "analysis_ts": 1710000000,
             }
 
+        def get_pair_liquidity(self, pair_address):
+            return {
+                "pair_address": pair_address,
+                "token0": wbnb,
+                "token1": new_token,
+                "reserve0": "100",
+                "reserve1": "1000000",
+                "block_timestamp_last": 1710000000,
+                "pair_total_supply": "10000",
+                "analysis_block": 123456,
+                "analysis_ts": 1710000000,
+            }
+
     monkeypatch.setattr(watcher, "RPCManager", FakeRPCManager)
     monkeypatch.setattr(watcher, "fetch_logs_chunked", lambda *args, **kwargs: [log])
     monkeypatch.setattr(watcher.time, "sleep", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt))
@@ -151,9 +177,14 @@ def test_watch_loop_scores_non_base_token_only(monkeypatch):
     assert new_token_score is not None
     assert new_token_score["decision"] == "candidate"
     assert new_token_score["confidence"] == 90.0
-    assert json.loads(new_token_score["risk_flags"]) == ["limited_v1_signal_set"]
+    assert json.loads(new_token_score["risk_flags"]) == ["limited_v1_signal_set", "limited_liquidity_signal_set"]
     assert json.loads(new_token_score["component_scores"])["mint"] == 15
+    assert json.loads(new_token_score["component_scores"])["liquidity"] == 10
     assert base_token_score is None
+
+    liquidity = dbmod.get_pair_liquidity(conn, Web3.to_checksum_address(pair))
+    assert liquidity["reserve0"] == "100"
+    assert liquidity["reserve1"] == "1000000"
 
     candidate = dbmod.get_candidate(
         conn,

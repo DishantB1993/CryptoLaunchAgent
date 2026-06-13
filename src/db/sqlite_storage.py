@@ -3,6 +3,56 @@ import time
 from typing import List, Optional, Tuple
 
 
+def _token_scores_has_legacy_unique_constraint(cur: sqlite3.Cursor) -> bool:
+    cur.execute("PRAGMA index_list(token_scores)")
+    for index in cur.fetchall():
+        index_name = index[1]
+        is_unique = bool(index[2])
+        if not is_unique:
+            continue
+        cur.execute(f"PRAGMA index_info({index_name})")
+        columns = [row[2] for row in cur.fetchall()]
+        if columns == ["token_address", "pair_address", "scoring_version"]:
+            return True
+    return False
+
+
+def _ensure_token_scores_history_schema(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    if not _token_scores_has_legacy_unique_constraint(cur):
+        return
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS token_scores_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_address TEXT NOT NULL,
+            pair_address TEXT,
+            score REAL NOT NULL,
+            confidence REAL NOT NULL,
+            decision TEXT NOT NULL,
+            risk_flags TEXT,
+            component_scores TEXT,
+            reason TEXT,
+            scoring_version TEXT NOT NULL,
+            scored_block INTEGER,
+            scored_ts INTEGER NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        INSERT INTO token_scores_new(id,token_address,pair_address,score,confidence,decision,risk_flags,component_scores,reason,scoring_version,scored_block,scored_ts)
+        SELECT id,token_address,pair_address,score,confidence,decision,risk_flags,component_scores,reason,scoring_version,scored_block,scored_ts
+        FROM token_scores
+        ORDER BY id
+        """
+    )
+    cur.execute("DROP TABLE token_scores")
+    cur.execute("ALTER TABLE token_scores_new RENAME TO token_scores")
+    conn.commit()
+
+
 def init_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
     cur = conn.cursor()
@@ -80,8 +130,7 @@ def init_db(path: str) -> sqlite3.Connection:
             reason TEXT,
             scoring_version TEXT NOT NULL,
             scored_block INTEGER,
-            scored_ts INTEGER NOT NULL,
-            UNIQUE(token_address, pair_address, scoring_version)
+            scored_ts INTEGER NOT NULL
         )
         """
     )
@@ -108,6 +157,23 @@ def init_db(path: str) -> sqlite3.Connection:
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS pair_liquidity (
+            pair_address TEXT PRIMARY KEY,
+            token0 TEXT,
+            token1 TEXT,
+            reserve0 TEXT,
+            reserve1 TEXT,
+            block_timestamp_last INTEGER,
+            pair_total_supply TEXT,
+            analysis_block INTEGER,
+            analysis_ts INTEGER,
+            created_ts INTEGER NOT NULL,
+            updated_ts INTEGER NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS candidate_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             token_address TEXT NOT NULL,
@@ -122,6 +188,37 @@ def init_db(path: str) -> sqlite3.Connection:
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_address TEXT NOT NULL,
+            pair_address TEXT NOT NULL,
+            candidate_id TEXT,
+            score_id INTEGER,
+            action TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            entry_reason TEXT,
+            created_ts INTEGER NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS paper_positions (
+            token_address TEXT NOT NULL,
+            pair_address TEXT NOT NULL,
+            status TEXT NOT NULL,
+            entry_score_id INTEGER,
+            entry_score REAL,
+            entry_confidence REAL,
+            entry_ts INTEGER,
+            exit_ts INTEGER,
+            exit_reason TEXT,
+            PRIMARY KEY (token_address, pair_address)
+        )
+        """
+    )
     # Ensure legacy DBs get the new column if missing
     try:
         cur.execute("ALTER TABLE token_security ADD COLUMN analysis_block INTEGER")
@@ -133,6 +230,16 @@ def init_db(path: str) -> sqlite3.Connection:
     except Exception:
         # ignore if column already exists
         pass
+    conn.commit()
+
+    _ensure_token_scores_history_schema(conn)
+    cur = conn.cursor()
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_scores_token_pair_version_ts ON token_scores(token_address,pair_address,scoring_version,scored_ts)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_scores_pair ON token_scores(pair_address)"
+    )
     conn.commit()
     return conn
 
@@ -282,6 +389,70 @@ def get_token_security(conn, token_address: str):
     }
 
 
+def save_pair_liquidity(
+    conn,
+    pair_address: str,
+    token0: str = None,
+    token1: str = None,
+    reserve0: str = None,
+    reserve1: str = None,
+    block_timestamp_last: int = None,
+    pair_total_supply: str = None,
+    analysis_block: int = None,
+    analysis_ts: int = None,
+):
+    cur = conn.cursor()
+    now = int(time.time())
+    if analysis_ts is None:
+        analysis_ts = now
+    existing = get_pair_liquidity(conn, pair_address)
+    created_ts = existing["created_ts"] if existing else now
+    cur.execute(
+        """
+        INSERT OR REPLACE INTO pair_liquidity(pair_address,token0,token1,reserve0,reserve1,block_timestamp_last,pair_total_supply,analysis_block,analysis_ts,created_ts,updated_ts)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            pair_address,
+            token0,
+            token1,
+            reserve0 if reserve0 is not None else None,
+            reserve1 if reserve1 is not None else None,
+            block_timestamp_last,
+            pair_total_supply if pair_total_supply is not None else None,
+            analysis_block,
+            analysis_ts,
+            created_ts,
+            now,
+        ),
+    )
+    conn.commit()
+
+
+def get_pair_liquidity(conn, pair_address: str):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT pair_address,token0,token1,reserve0,reserve1,block_timestamp_last,pair_total_supply,analysis_block,analysis_ts,created_ts,updated_ts FROM pair_liquidity WHERE pair_address = ?",
+        (pair_address,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "pair_address": row[0],
+        "token0": row[1],
+        "token1": row[2],
+        "reserve0": row[3],
+        "reserve1": row[4],
+        "block_timestamp_last": row[5],
+        "pair_total_supply": row[6],
+        "analysis_block": row[7],
+        "analysis_ts": row[8],
+        "created_ts": row[9],
+        "updated_ts": row[10],
+    }
+
+
 def save_token_security(conn, token_address: str, owner_address: str, is_ownership_renounced: bool, total_supply: str, owner_balance: str, owner_percent: float, has_mint_function: bool, analysis_block: int = None, analysis_ts: int = None):
     cur = conn.cursor()
     ts = int(time.time())
@@ -323,7 +494,7 @@ def save_token_score(
     if scored_ts is None:
         scored_ts = int(time.time())
     cur.execute(
-        "INSERT OR REPLACE INTO token_scores(token_address,pair_address,score,confidence,decision,risk_flags,component_scores,reason,scoring_version,scored_block,scored_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO token_scores(token_address,pair_address,score,confidence,decision,risk_flags,component_scores,reason,scoring_version,scored_block,scored_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         (
             token_address,
             pair_address,
@@ -339,12 +510,7 @@ def save_token_score(
         ),
     )
     conn.commit()
-    cur.execute(
-        "SELECT id FROM token_scores WHERE token_address = ? AND pair_address = ? AND scoring_version = ?",
-        (token_address, pair_address, scoring_version),
-    )
-    row = cur.fetchone()
-    return row[0] if row else None
+    return cur.lastrowid
 
 
 def get_latest_token_score(conn, token_address: str, pair_address: str = None, scoring_version: str = None):
@@ -544,3 +710,162 @@ def list_active_candidates(conn):
         }
         for row in rows
     ]
+
+
+def save_paper_trade(
+    conn,
+    token_address: str,
+    pair_address: str,
+    candidate_id: str,
+    score_id: int,
+    action: str,
+    quantity: float,
+    entry_reason: str,
+    created_ts: int = None,
+):
+    cur = conn.cursor()
+    if created_ts is None:
+        created_ts = int(time.time())
+    cur.execute(
+        "INSERT INTO paper_trades(token_address,pair_address,candidate_id,score_id,action,quantity,entry_reason,created_ts) VALUES(?,?,?,?,?,?,?,?)",
+        (
+            token_address,
+            pair_address,
+            candidate_id,
+            score_id,
+            action,
+            quantity,
+            entry_reason,
+            created_ts,
+        ),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_paper_trades(conn, token_address: str = None, pair_address: str = None):
+    cur = conn.cursor()
+    query = "SELECT id,token_address,pair_address,candidate_id,score_id,action,quantity,entry_reason,created_ts FROM paper_trades"
+    params = []
+    clauses = []
+    if token_address is not None:
+        clauses.append("token_address = ?")
+        params.append(token_address)
+    if pair_address is not None:
+        clauses.append("pair_address = ?")
+        params.append(pair_address)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY id"
+    cur.execute(query, tuple(params))
+    rows = cur.fetchall()
+    return [
+        {
+            "id": row[0],
+            "token_address": row[1],
+            "pair_address": row[2],
+            "candidate_id": row[3],
+            "score_id": row[4],
+            "action": row[5],
+            "quantity": row[6],
+            "entry_reason": row[7],
+            "created_ts": row[8],
+        }
+        for row in rows
+    ]
+
+
+def save_paper_position(
+    conn,
+    token_address: str,
+    pair_address: str,
+    status: str,
+    entry_score_id: int,
+    entry_score: float,
+    entry_confidence: float,
+    entry_ts: int = None,
+    exit_ts: int = None,
+    exit_reason: str = None,
+):
+    cur = conn.cursor()
+    if entry_ts is None:
+        entry_ts = int(time.time())
+    cur.execute(
+        "INSERT OR REPLACE INTO paper_positions(token_address,pair_address,status,entry_score_id,entry_score,entry_confidence,entry_ts,exit_ts,exit_reason) VALUES(?,?,?,?,?,?,?,?,?)",
+        (
+            token_address,
+            pair_address,
+            status,
+            entry_score_id,
+            entry_score,
+            entry_confidence,
+            entry_ts,
+            exit_ts,
+            exit_reason,
+        ),
+    )
+    conn.commit()
+    return get_paper_position(conn, token_address, pair_address)
+
+
+def get_paper_position(conn, token_address: str, pair_address: str):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT token_address,pair_address,status,entry_score_id,entry_score,entry_confidence,entry_ts,exit_ts,exit_reason FROM paper_positions WHERE token_address = ? AND pair_address = ?",
+        (token_address, pair_address),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "token_address": row[0],
+        "pair_address": row[1],
+        "status": row[2],
+        "entry_score_id": row[3],
+        "entry_score": row[4],
+        "entry_confidence": row[5],
+        "entry_ts": row[6],
+        "exit_ts": row[7],
+        "exit_reason": row[8],
+    }
+
+
+def get_open_paper_position(conn, token_address: str, pair_address: str):
+    position = get_paper_position(conn, token_address, pair_address)
+    if position and position["status"] == "OPEN":
+        return position
+    return None
+
+
+def list_open_paper_positions(conn):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT token_address,pair_address,status,entry_score_id,entry_score,entry_confidence,entry_ts,exit_ts,exit_reason FROM paper_positions WHERE status = 'OPEN' ORDER BY entry_ts"
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "token_address": row[0],
+            "pair_address": row[1],
+            "status": row[2],
+            "entry_score_id": row[3],
+            "entry_score": row[4],
+            "entry_confidence": row[5],
+            "entry_ts": row[6],
+            "exit_ts": row[7],
+            "exit_reason": row[8],
+        }
+        for row in rows
+    ]
+
+
+def close_paper_position(conn, token_address: str, pair_address: str, exit_ts: int = None, exit_reason: str = None):
+    cur = conn.cursor()
+    if exit_ts is None:
+        exit_ts = int(time.time())
+    cur.execute(
+        "UPDATE paper_positions SET status = 'CLOSED', exit_ts = ?, exit_reason = ? WHERE token_address = ? AND pair_address = ? AND status = 'OPEN'",
+        (exit_ts, exit_reason, token_address, pair_address),
+    )
+    conn.commit()
+    return get_paper_position(conn, token_address, pair_address)

@@ -79,6 +79,19 @@ def test_rejection_for_missing_security():
     assert reason == "Security analysis incomplete."
 
 
+def test_rejection_for_zero_reserves():
+    result = score_result(
+        score=30.0,
+        decision="reject",
+        risk_flags=["limited_v1_signal_set", "limited_liquidity_signal_set", "zero_reserves"],
+        risk_flags_json=json.dumps(["limited_v1_signal_set", "limited_liquidity_signal_set", "zero_reserves"]),
+        reason="Pair has zero reserves.",
+    )
+    status, reason = classify_candidate(result)
+    assert status == "reject"
+    assert reason == "Pair has zero reserves."
+
+
 def test_candidate_event_creation():
     conn = dbmod.init_db(":memory:")
     result = score_result()

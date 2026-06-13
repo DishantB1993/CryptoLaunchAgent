@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from src.liquidity.analyzer import analyze_pair_liquidity
+
 
 SCORING_VERSION = "launch_score_v1"
 MAX_SCORE_V1 = 90
@@ -78,13 +80,21 @@ def _reason(decision: str, risk_flags: list[str]) -> str:
         return "Owner controls more than 50% of supply."
     if "missing_security" in risk_flags:
         return "Security analysis incomplete."
+    if "zero_reserves" in risk_flags:
+        return "Pair has zero reserves."
+    if "one_sided_liquidity" in risk_flags:
+        return "Pair has one-sided liquidity."
+    if "zero_pair_total_supply" in risk_flags:
+        return "Pair LP token supply is zero."
+    if "liquidity_unreadable" in risk_flags:
+        return "Pair liquidity could not be read."
     if "missing_total_supply" in risk_flags:
         return "Total supply unavailable."
     if "owner_not_renounced_and_owner_percent_unknown" in risk_flags:
         return "Ownership is not renounced and owner concentration is unknown."
     if "ownership_not_renounced" in risk_flags:
         return "Ownership is not renounced."
-    material_flags = [flag for flag in risk_flags if flag != LIMITED_V1_SIGNAL_FLAG]
+    material_flags = [flag for flag in risk_flags if flag not in (LIMITED_V1_SIGNAL_FLAG, "limited_liquidity_signal_set")]
     if not material_flags and decision == "candidate":
         return "No v1 risk flags detected; limited checks only."
     if risk_flags:
@@ -92,7 +102,7 @@ def _reason(decision: str, risk_flags: list[str]) -> str:
     return decision
 
 
-def score_token(token: dict | None, security: dict | None, pair_address: str | None = None) -> dict:
+def score_token(token: dict | None, security: dict | None, pair_address: str | None = None, liquidity: dict | None = None) -> dict:
     risk_flags: list[str] = [LIMITED_V1_SIGNAL_FLAG]
     component_scores = {
         "ownership": 0,
@@ -100,6 +110,7 @@ def score_token(token: dict | None, security: dict | None, pair_address: str | N
         "mint": 0,
         "metadata": 0,
         "timing": 0,
+        "liquidity": 0,
     }
 
     if token is None:
@@ -184,8 +195,12 @@ def score_token(token: dict | None, security: dict | None, pair_address: str | N
     else:
         risk_flags.append("missing_pair_address")
 
+    liquidity_analysis = analyze_pair_liquidity(liquidity)
+    risk_flags.extend(liquidity_analysis["risk_flags"])
+    component_scores["liquidity"] = liquidity_analysis["component_score"]
+
     score = float(sum(component_scores.values()))
-    caps = []
+    caps = list(liquidity_analysis["caps"])
     if has_mint is True:
         caps.append(50)
     if owner_percent is not None and owner_percent > 50:
@@ -203,7 +218,7 @@ def score_token(token: dict | None, security: dict | None, pair_address: str | N
         score = min(score, min(caps))
     score = min(score, MAX_SCORE_V1)
 
-    confidence = 100.0
+    confidence = float(MAX_CONFIDENCE_V1)
     confidence -= 40 if "missing_security" in risk_flags else 0
     confidence -= 15 if "missing_owner" in risk_flags else 0
     confidence -= 15 if "missing_owner_percent" in risk_flags else 0
@@ -211,6 +226,8 @@ def score_token(token: dict | None, security: dict | None, pair_address: str | N
     confidence -= 10 if "missing_total_supply" in risk_flags else 0
     confidence -= 5 if "missing_analysis_block" in risk_flags else 0
     confidence -= 5 if "missing_analysis_ts" in risk_flags else 0
+    confidence -= 10 if "missing_liquidity" in risk_flags else 0
+    confidence -= 10 if "liquidity_unreadable" in risk_flags else 0
     confidence = max(0.0, min(MAX_CONFIDENCE_V1, confidence))
 
     decision = _decision(score)

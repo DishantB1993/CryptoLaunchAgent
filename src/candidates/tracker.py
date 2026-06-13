@@ -13,6 +13,10 @@ BLOCKING_FLAGS = {
     "high_owner_concentration",
     "severe_owner_concentration",
     "missing_security",
+    "liquidity_unreadable",
+    "zero_reserves",
+    "one_sided_liquidity",
+    "zero_pair_total_supply",
 }
 
 

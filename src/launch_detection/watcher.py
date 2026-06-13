@@ -191,12 +191,39 @@ def run_watch_loop(db_conn, rpc_urls, factory_addr, poll_interval: int = 3, chun
 
                         # Save pair record
                         dbmod.save_pair(db_conn, pair, token0, token1, factory_addr, tx, blk)
+                        try:
+                            liquidity_data = manager.get_pair_liquidity(pair)
+                        except Exception:
+                            liquidity_data = {
+                                "pair_address": pair,
+                                "token0": None,
+                                "token1": None,
+                                "reserve0": None,
+                                "reserve1": None,
+                                "block_timestamp_last": None,
+                                "pair_total_supply": None,
+                                "analysis_block": None,
+                                "analysis_ts": None,
+                            }
+                        dbmod.save_pair_liquidity(
+                            db_conn,
+                            Web3.to_checksum_address(pair),
+                            liquidity_data.get("token0"),
+                            liquidity_data.get("token1"),
+                            liquidity_data.get("reserve0"),
+                            liquidity_data.get("reserve1"),
+                            liquidity_data.get("block_timestamp_last"),
+                            liquidity_data.get("pair_total_supply"),
+                            liquidity_data.get("analysis_block"),
+                            liquidity_data.get("analysis_ts"),
+                        )
 
                         for candidate in candidate_tokens(token0, token1):
                             candidate_addr = Web3.to_checksum_address(candidate)
                             token_data = dbmod.get_token(db_conn, candidate_addr)
                             security_data = dbmod.get_token_security(db_conn, candidate_addr)
-                            score_result = score_token(token_data, security_data, pair_address=pair)
+                            pair_liquidity = dbmod.get_pair_liquidity(db_conn, Web3.to_checksum_address(pair))
+                            score_result = score_token(token_data, security_data, pair_address=pair, liquidity=pair_liquidity)
                             score_id = dbmod.save_token_score(
                                 db_conn,
                                 candidate_addr,
